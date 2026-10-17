@@ -13,9 +13,20 @@ function Log($m) { Add-Content -Path $logFile -Value ("{0} {1}" -f (Get-Date -Fo
 Set-Content -Path $logFile -Value "Troupe Desktop install"
 
 try {
+    # Close a running copy and wait for it (and its WebView2 helpers) to let go of the folder.
     Get-Process Troupe -ErrorAction SilentlyContinue | Stop-Process -Force
-    Start-Sleep -Milliseconds 500
-    if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+    for ($i = 0; $i -lt 20 -and (Get-Process Troupe -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 250 }
+    # Troupe's own SSH tunnels (recognisable by their arguments) can outlive a force-closed app.
+    Get-CimInstance Win32_Process -Filter "Name='ssh.exe'" | Where-Object { $_.CommandLine -like '*ExitOnForwardFailure=yes -N -L 127.0.0.1:*' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    if (Test-Path $dest) {
+        $removed = $false
+        for ($i = 0; $i -lt 10 -and -not $removed; $i++) {
+            try { Remove-Item $dest -Recurse -Force -ErrorAction Stop; $removed = $true }
+            catch { Start-Sleep -Milliseconds 500 }
+        }
+        if (-not $removed) { throw "Troupe is still running or its folder is open elsewhere. Quit Troupe from the tray and try again." }
+    }
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
     Copy-Item -Path (Join-Path $src '*') -Destination $dest -Recurse -Force
     Copy-Item -Path (Join-Path $PSScriptRoot 'uninstall.ps1') -Destination $dest -Force

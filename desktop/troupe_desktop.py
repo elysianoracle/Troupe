@@ -92,8 +92,11 @@ class Tunnel:
                                          "-L", f"127.0.0.1:{self.port}:127.0.0.1:{self.cfg['remote_port']}",
                                          f"{self.cfg['user']}@{self.cfg['host']}"]
             started = time.time()
+            # Run from the settings folder, never the install folder, so an orphaned tunnel can't
+            # block upgrades.
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
             self.proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                                         creationflags=NO_WINDOW)
+                                         creationflags=NO_WINDOW, cwd=str(CONFIG_DIR))
             _, err = self.proc.communicate()
             if self.stopping:
                 break
@@ -120,37 +123,68 @@ def fetch_token(cfg: dict) -> str:
     if cfg.get("token"):
         return cfg["token"]
     r = subprocess.run(ssh_base(cfg) + [f"{cfg['user']}@{cfg['host']}", cfg["token_command"]],
-                       capture_output=True, text=True, timeout=40, creationflags=NO_WINDOW)
+                       capture_output=True, text=True, timeout=40, creationflags=NO_WINDOW, cwd=str(CONFIG_DIR))
     token = r.stdout.strip()
     if r.returncode != 0 or not token:
         raise RuntimeError((r.stderr.strip().splitlines() or ["could not read the admin token"])[-1])
     return token
 
 
+def _font_faces() -> str:
+    """Maison's typefaces, embedded so the pages look right before the server is reachable."""
+    import base64
+    faces = []
+    for fam, weight, fn in (("Cormorant Garamond", 600, "cormorant-garamond-latin-600-normal.woff2"),
+                            ("Instrument Sans", 400, "instrument-sans-latin-400-normal.woff2"),
+                            ("Instrument Sans", 500, "instrument-sans-latin-500-normal.woff2")):
+        try:
+            data = base64.b64encode(resource(f"fonts/{fn}").read_bytes()).decode()
+        except OSError:
+            continue
+        faces.append(f"@font-face{{font-family:'{fam}';font-weight:{weight};src:url(data:font/woff2;base64,{data}) format('woff2')}}")
+    return "".join(faces)
+
+
+_FACES = None
+SEAL = ('<svg class="seal" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="30.5"/>'
+        '<circle cx="32" cy="32" r="25.5" class="inner"/><text x="32" y="42" text-anchor="middle">T</text></svg>')
+
+
 def page(title: str, body: str) -> str:
+    global _FACES
+    if _FACES is None:
+        _FACES = _font_faces()
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>
-    :root {{ --bg:#f6f6f4; --panel:#fff; --ink:#1b1d21; --muted:#6b6f76; --line:#e3e3df; --accent:#2f6fde; }}
-    @media (prefers-color-scheme: dark) {{ :root {{ --bg:#14161a; --panel:#1c1f24; --ink:#e8e8e6; --muted:#9a9ea6; --line:#2c3037; --accent:#5b8ff0; }} }}
-    body {{ margin:0; height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--ink);
-           font:15px/1.5 system-ui,"Segoe UI",sans-serif; }}
-    .card {{ width:min(460px, calc(100% - 32px)); background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:24px; }}
-    h1 {{ margin:0 0 6px; font-size:20px; }} p {{ color:var(--muted); margin:6px 0 14px; }}
+    {_FACES}
+    :root {{ --paper:#F6F1E7; --card:#FBF8F1; --field:#FFFDF8; --ink:#1C1A17; --muted:#6B6458; --line:#DDD3C1; --brass:#9A7B4F; --danger:#8E2F25; }}
+    @media (prefers-color-scheme: dark) {{ :root {{ --paper:#16130F; --card:#1E1A15; --field:#1A1612; --ink:#EEE6D6; --muted:#A49A88; --line:#2E2820; --brass:#C2A06A; --danger:#E08A7C; }} }}
+    body {{ margin:0; min-height:100vh; display:grid; place-items:center; background:radial-gradient(1200px 600px at 50% -10%, var(--card), var(--paper));
+           color:var(--ink); font:15px/1.6 'Instrument Sans','Segoe UI',system-ui,sans-serif; -webkit-font-smoothing:antialiased; }}
+    .card {{ width:min(460px, calc(100% - 32px)); background:var(--card); border:1px solid var(--line); border-radius:14px; padding:34px 32px 28px; display:grid; gap:4px; }}
+    .seal {{ width:52px; height:52px; margin-bottom:8px; }} .seal circle {{ fill:none; stroke:var(--brass); stroke-width:1.2; }}
+    .seal circle.inner {{ stroke-width:.7; }} .seal text {{ font-family:'Cormorant Garamond',Georgia,serif; font-size:26px; font-weight:600; fill:var(--ink); }}
+    .seal.turn {{ animation:turn 2.4s cubic-bezier(.4,0,.2,1) infinite; transform-origin:50% 50%; }}
+    @keyframes turn {{ 0% {{ transform:rotate(0) }} 60%,100% {{ transform:rotate(360deg) }} }}
+    @media (prefers-reduced-motion: reduce) {{ .seal.turn {{ animation:none }} }}
+    h1 {{ margin:0 0 4px; font-family:'Cormorant Garamond',Georgia,serif; font-weight:600; font-size:30px; line-height:1.15; }}
+    p {{ color:var(--muted); margin:4px 0 14px; }}
     label {{ display:grid; gap:4px; font-size:13px; color:var(--muted); margin-bottom:10px; }}
-    input {{ font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--ink); }}
-    .row {{ display:flex; gap:8px; }} .row input {{ flex:1; }}
-    button {{ font:inherit; padding:8px 14px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--ink); cursor:pointer; }}
-    button.primary {{ background:var(--accent); border-color:var(--accent); color:#fff; }}
-    .spin {{ width:28px; height:28px; border:3px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:s 1s linear infinite; margin-bottom:12px; }}
-    @keyframes s {{ to {{ transform:rotate(360deg); }} }} code {{ font-size:12px; }} .err {{ color:#c0392b; overflow-wrap:anywhere; }}
+    input {{ font:inherit; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--field); color:var(--ink); }}
+    input:focus {{ outline:none; border-color:var(--brass); }}
+    .row {{ display:flex; gap:10px; flex-wrap:wrap; }} .row input {{ flex:1; }}
+    button {{ font:inherit; padding:9px 18px; border-radius:999px; border:1px solid var(--line); background:transparent; color:var(--ink); cursor:pointer; }}
+    button:hover {{ border-color:var(--ink); }}
+    button.primary {{ background:var(--ink); border-color:var(--ink); color:var(--paper); }}
+    code {{ font-size:12px; }} .err {{ color:var(--danger); overflow-wrap:anywhere; }}
     </style><title>{title}</title></head><body><div class="card">{body}</div></body></html>"""
 
 
-CONNECTING = page("Troupe", '<div class="spin"></div><h1>Connecting to your team…</h1>'
-                            '<p id="s">Opening a secure tunnel to your Troupe server.</p>')
+CONNECTING = page("Troupe", SEAL.replace('class="seal"', 'class="seal turn"') +
+                  '<h1>Gathering your troupe…</h1><p id="s">Opening a private connection to your server.</p>')
 
 
 def error_page(msg: str) -> str:
-    return page("Troupe", f"""<h1>Can't reach your Troupe server</h1><p class="err">{msg}</p>
+    return page("Troupe", SEAL + f"""<h1>Your server isn't answering</h1><p class="err">{msg}</p>
       <p>Check that the server is running and that its firewall allows SSH from your current IP address
       (a VPN or proxy changes that address).</p>
       <p id="auto">Retrying automatically in <span id="n">20</span>s…</p>
@@ -167,7 +201,7 @@ def error_page(msg: str) -> str:
 
 def settings_page(cfg: dict) -> str:
     v = {k: str(cfg.get(k, "")).replace('"', "&quot;") for k in ("host", "user", "key_path", "remote_port")}
-    return page("Troupe setup", f"""<h1>Connect to your Troupe server</h1>
+    return page("Troupe setup", SEAL + f"""<h1>Connect to your server</h1>
       <p>Troupe Desktop reaches the server over SSH, so its web UI never has to be public.</p>
       <label>Server address<input id="host" value="{v['host']}" placeholder="203.0.113.10"></label>
       <label>SSH user<input id="user" value="{v['user']}"></label>
@@ -372,7 +406,7 @@ class App:
             return
         self.window = webview.create_window(APP_NAME, html=CONNECTING, js_api=App.Api(),
                                             width=1200, height=820, min_size=(380, 520),
-                                            background_color="#14161a", text_select=True)
+                                            background_color="#F6F1E7", text_select=True)
         self.window.events.closing += self.on_closing
 
         def startup():

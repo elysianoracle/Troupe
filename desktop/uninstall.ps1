@@ -2,6 +2,8 @@
 # Your connection settings in %USERPROFILE%\.troupe-desktop are kept unless you delete that folder.
 $ErrorActionPreference = 'SilentlyContinue'
 Get-Process Troupe | Stop-Process -Force
+Get-CimInstance Win32_Process -Filter "Name='ssh.exe'" | Where-Object { $_.CommandLine -like '*ExitOnForwardFailure=yes -N -L 127.0.0.1:*' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 Start-Sleep -Milliseconds 500
 Remove-Item (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Troupe.lnk') -Force
 Remove-Item (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Troupe.lnk') -Force

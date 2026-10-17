@@ -105,6 +105,10 @@ class AnthropicProvider:
                     **kwargs, betas=["server-side-fallback-2026-07-01"], fallbacks="default")
             else:
                 resp = await self.client.messages.create(**kwargs)
+        except a.AuthenticationError as e:
+            raise LLMError("the model provider rejected the API key; choose a model in Vault & system") from e
+        except TypeError as e:  # the SDK raises this when no key is configured at all
+            raise LLMError("no AI model is set up yet; choose one in Vault & system") from e
         except a.RateLimitError as e:
             raise LLMError(f"rate limited: {e}") from e
         except a.APIStatusError as e:
