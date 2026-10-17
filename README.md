@@ -36,7 +36,7 @@ It brings together the best ideas from Meta Muse, Manus Cue and xAI Grok Bot, in
 On a fresh Debian 12 or Ubuntu 22.04+ server (8 GB of RAM is plenty):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/troupe/main/deploy/install.sh | sudo TROUPE_REPO=https://github.com/<owner>/troupe bash
+curl -fsSL https://raw.githubusercontent.com/elysianoracle/Troupe/main/deploy/install.sh | sudo bash
 ```
 
 Or from a copy of this repository: `sudo ./deploy/install.sh`.

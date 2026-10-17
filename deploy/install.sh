@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Troupe installer for Debian 12 / Ubuntu 22.04+ (amd64 or arm64). Run as root.
 #
-#   curl -fsSL https://raw.githubusercontent.com/<owner>/troupe/main/deploy/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/elysianoracle/Troupe/main/deploy/install.sh | sudo bash
 #   sudo ./deploy/install.sh                      # from a copy of the repository
 #
 # Options (environment variables):
 #   TROUPE_DOMAIN=troupe.example.com   your domain (DNS pointed at this server); default <ip>.sslip.io
-#   TROUPE_REPO=https://github.com/<owner>/troupe   where to fetch Troupe when not run from a copy
+#   TROUPE_REPO=https://github.com/elysianoracle/Troupe   where to fetch Troupe (default shown)
 #   TROUPE_HARDEN_SSH=0                leave SSH settings alone
 # Re-run the same command to update; your data and settings are kept.
 set -euo pipefail
@@ -19,7 +19,7 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /
 if [[ -f "$SELF_DIR/../pyproject.toml" ]]; then
   REPO="$(cd "$SELF_DIR/.." && pwd)"
 else
-  : "${TROUPE_REPO:?Set TROUPE_REPO to the Git URL of Troupe, or run this script from a copy of the repository.}"
+  TROUPE_REPO="${TROUPE_REPO:-https://github.com/elysianoracle/Troupe.git}"
   say "Fetching Troupe"
   apt-get update -qq && apt-get install -y -qq git >/dev/null
   rm -rf /opt/troupe-src && git clone -q --depth 1 "$TROUPE_REPO" /opt/troupe-src
