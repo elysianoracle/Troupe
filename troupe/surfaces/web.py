@@ -6,9 +6,11 @@ import contextlib
 import hmac
 import json
 import secrets
+import zipfile
 from pathlib import Path
 from typing import Any
 
+import httpx
 from croniter import croniter
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
@@ -341,20 +343,75 @@ def build_api(app) -> FastAPI:
 
     @api.get("/api/skills", dependencies=[A])
     async def skills():
-        rows = db.all("SELECT s.id, s.agent_id, a.name AS agent_name, s.name, s.description, s.params, s.playbook, "
-                      "s.created_at FROM skills s JOIN agents a ON a.id = s.agent_id ORDER BY s.name")
-        for r in rows:
-            r["params"] = loads(r["params"], [])
-        return rows
+        names = {a["id"]: a["name"] for a in db.all("SELECT id, name FROM agents")}
+        installed = []
+        for s in app.skills.installed():
+            row = s.summary()
+            agents = app.skills.agents_for(s.name)
+            row["agents"] = agents
+            row["agent_names"] = ["everyone"] if "*" in agents else [names.get(x, "?") for x in agents]
+            installed.append(row)
+        return {"installed": installed, "library": app.skills.library()}
 
-    @api.patch("/api/skills/{skill_id}", dependencies=[A])
-    async def edit_skill(skill_id: str, body: dict):
-        db.update("skills", "id", skill_id, {k: v for k, v in body.items() if k in {"description", "playbook"}})
+    @api.get("/api/skills/{name}", dependencies=[A])
+    async def skill_detail(name: str):
+        s = app.skills.get(name)
+        if not s:
+            raise HTTPException(404, "no such skill")
+        return {**s.summary(), "agents": app.skills.agents_for(name), "body": app.skills.body(name)}
+
+    @api.post("/api/skills/inspect", dependencies=[A])
+    async def inspect_skill(body: dict):
+        from ..skills import SkillError
+        try:
+            data, subdir = await app.skills.fetch(str(body.get("url", "")))
+            return app.skills.stage(data, str(body.get("url")), subdir)
+        except (SkillError, httpx.HTTPError) as e:
+            raise HTTPException(400, str(e))
+
+    @api.post("/api/skills/upload", dependencies=[A])
+    async def upload_skill(request: Request):
+        from ..skills import SkillError
+        data = await request.body()
+        if len(data) > 40 * 1024 * 1024:
+            raise HTTPException(400, "upload is larger than 40 MB")
+        try:
+            return app.skills.stage(data, "upload")
+        except (SkillError, zipfile.BadZipFile) as e:
+            raise HTTPException(400, str(e))
+
+    @api.post("/api/skills/install", dependencies=[A])
+    async def install_skill(body: dict):
+        from ..skills import SkillError
+        try:
+            if body.get("library"):
+                out = [app.skills.install_library(str(body["library"]), body.get("agents") or None)]
+            else:
+                out = app.skills.install_staged(str(body.get("staging_id", "")), body.get("names") or None,
+                                                body.get("agents") or None, override=bool(body.get("override")))
+        except SkillError as e:
+            raise HTTPException(400, str(e))
+        return {"installed": [s.summary() for s in out]}
+
+    @api.patch("/api/skills/{name}", dependencies=[A])
+    async def update_skill(name: str, body: dict):
+        from ..skills import SkillError
+        try:
+            if "agents" in body:
+                app.skills.set_agents(name, [str(x) for x in body["agents"]])
+            if "trusted" in body:
+                app.skills.set_trusted(name, bool(body["trusted"]))
+        except SkillError as e:
+            raise HTTPException(404, str(e))
         return {"ok": True}
 
-    @api.delete("/api/skills/{skill_id}", dependencies=[A])
-    async def del_skill(skill_id: str):
-        db.execute("DELETE FROM skills WHERE id = ?", (skill_id,))
+    @api.delete("/api/skills/{name}", dependencies=[A])
+    async def del_skill(name: str):
+        from ..skills import SkillError
+        try:
+            app.skills.uninstall(name)
+        except SkillError as e:
+            raise HTTPException(400, str(e))
         return {"ok": True}
 
     @api.get("/api/schedules", dependencies=[A])

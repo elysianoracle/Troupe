@@ -247,11 +247,14 @@ async def test_teach_by_demonstration_saves_skill(app):
     await app.orch.user_message(room["id"], "/done")
     for _ in range(100):
         await asyncio.sleep(0.05)
-        if app.db.one("SELECT * FROM skills"):
+        if app.skills.get("weekly-report"):
             break
-    skill = app.db.one("SELECT * FROM skills")
-    assert skill and skill["name"] == "weekly-report" and "{week}" in skill["playbook"]
-    assert "TOOL shell" in skill["source_trace"]
+    skill = app.skills.get("weekly-report")
+    assert skill and skill.source == "learned" and skill.params == ["week"]
+    assert "{week}" in app.skills.body("weekly-report")
+    assert "TOOL shell" in app.skills.read_file("weekly-report", "references/demonstration.md")
+    # A learned skill belongs to the agent that learned it.
+    assert [s.name for s in app.skills.for_agent(agent["id"])] == ["weekly-report"]
 
 
 async def test_budget_exhaustion_pauses_agent(app):

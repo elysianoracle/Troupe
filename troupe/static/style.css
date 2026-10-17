@@ -204,3 +204,30 @@ dialog::backdrop { background: rgba(28, 26, 23, .35); backdrop-filter: blur(2px)
   .title { font-size: 28px; }
   .grid2 { grid-template-columns: 1fr; }
 }
+
+/* Skills gallery */
+.intro { max-width: 820px; display: grid; gap: 6px; }
+.section-h { font-size: 24px; margin: 18px 0 0; display: flex; align-items: baseline; gap: 10px; }
+.section-h .count { font-family: var(--sans); font-size: 13px; color: var(--muted); font-weight: 400; }
+.skill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+.skill { align-content: start; }
+.skill-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.skill-head h3 { font-size: 21px; text-transform: capitalize; }
+.skill .lede { font-size: 17px; line-height: 1.45; }
+.chip { font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--paper-2); border: 1px solid var(--line); color: var(--ink-2); }
+.chip.quiet { color: var(--muted); }
+.inline { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.inline select { width: auto; padding: 6px 10px; font-size: 13px; }
+.inline input[type=checkbox] { width: auto; accent-color: var(--danger); }
+.row.nowrap { flex-wrap: nowrap; }
+.add-skill { max-width: 820px; }
+.skill-body { border-top: 1px solid var(--line); padding-top: 12px; }
+.skill-md { font-size: 14px; color: var(--ink-2); max-height: 420px; overflow-y: auto; }
+.skill-md h1 { font-size: 22px; margin: 0 0 6px; }
+.report { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; display: grid; gap: 8px; background: var(--paper); }
+.report.blocked { border-color: var(--danger); }
+.findings { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 13px; }
+.findings li.high strong { color: var(--danger); }
+.findings li.medium strong { color: var(--brass-ink); }
+.findings code { display: block; margin-top: 2px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.danger-text { color: var(--danger); }

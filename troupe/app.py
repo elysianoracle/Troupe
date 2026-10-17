@@ -9,6 +9,7 @@ from typing import Any
 from .agent import AgentRunner
 from .agentmail import AgentMail
 from .auth import Auth
+from .skills import SkillStore
 from .comms import SMS, Email, Mailer
 from .config import Settings
 from .db import DB, loads, new_id, now
@@ -52,6 +53,7 @@ class App:
         self.db = DB(settings.db_path)
         self.vault = Vault(self.db, settings.data_dir)
         self.auth = Auth(self.db, settings.admin_token)
+        self.skills = SkillStore(settings.data_dir, self.db)
         self.guard = Guardrails(self.db)
         self.llm = llm or make_provider(settings)
         self.sandbox = sandbox or SandboxManager(settings)
@@ -67,6 +69,7 @@ class App:
     async def start(self) -> None:
         from . import triggers
 
+        self.prepare_skills()
         await self.mcp.start_all()
         self._bg += [asyncio.create_task(self.orch.dispatcher()),
                      asyncio.create_task(triggers.scheduler(self)),
@@ -147,13 +150,17 @@ class App:
         self.events.publish("approval_decided", {"id": approval_id, "status": status})
         return self.db.one("SELECT * FROM approvals WHERE id = ?", (approval_id,))
 
+    def prepare_skills(self) -> None:
+        """First run installs the curated library; older databases' playbooks move to SKILL.md folders."""
+        if self.db.kv_get("skills:library_seeded") != "1":
+            self.skills.install_all_library()
+            self.db.kv_set("skills:library_seeded", "1")
+        self.skills.migrate_db_skills()
+
     def save_skill(self, agent_id: str, name: str, description: str, params: list, playbook: str,
                    trace: str = "") -> None:
-        self.db.execute(
-            "INSERT INTO skills(id, agent_id, name, description, params, playbook, source_trace, created_at) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(agent_id, name) DO UPDATE SET "
-            "description = excluded.description, params = excluded.params, playbook = excluded.playbook",
-            (new_id("skl"), agent_id, name, description, json.dumps(params or []), playbook, trace[:60_000], now()))
+        agent = self.db.one("SELECT * FROM agents WHERE id = ?", (agent_id,))
+        self.skills.save_learned(agent, name, description, params, playbook, trace)
 
     # --- agents and rooms ---------------------------------------------------------------------------
     def create_agent(self, name: str, role: str = "", instructions: str = "", model: str = "",

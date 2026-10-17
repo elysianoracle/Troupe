@@ -17,6 +17,7 @@ dependencies = [
     "croniter>=2.0",
     "cryptography>=42",
     "mcp>=1.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -30,7 +31,7 @@ troupe = "troupe.main:main"
 packages = ["troupe", "troupe.surfaces"]
 
 [tool.setuptools.package-data]
-troupe = ["static/*"]
+troupe = ["static/*", "static/fonts/*", "skills_library/**/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

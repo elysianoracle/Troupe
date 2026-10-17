@@ -344,23 +344,128 @@
   }
 
   // ---------- skills ----------
+  const NEED_LABEL = { network: "Internet", shell: "Runs scripts", browser: "Browser", files: "Files",
+    email_send: "Sends email", sms_send: "Sends texts", purchase: "Purchases", schedule: "Schedules", handoff: "Hands off" };
+  const SOURCE_LABEL = { library: "Built-in", learned: "Learned", community: "Community" };
+  const chips = (needs) => (needs || []).map((n) => `<span class="chip">${esc(NEED_LABEL[n] || n)}</span>`).join("") || `<span class="chip quiet">Text only</span>`;
+
   async function renderSkills() {
     setTitle("Skills", "What your agents know how to do");
-    const rows = await api("/api/skills");
-    $("#view-skills").innerHTML = `<div class="card meta">Teach a skill by demonstration: in any room send <code>/teach skill-name @Agent</code>,
-      walk the agent through the task once, then send <code>/done</code>. Run it later by saying “use skill skill-name”, or schedule it.</div>` +
-      (rows.map((s) => `<div class="card"><h3>${esc(s.name)} <span class="badge">${esc(s.agent_name)}</span></h3>
-        <div>${esc(s.description)}</div><div class="meta">Params: ${esc(s.params.join(", ") || "none")}</div>
-        <details><summary>Playbook</summary><textarea rows="10" data-pb="${s.id}">${esc(s.playbook)}</textarea>
-        <div class="row"><button class="btn" data-save="${s.id}">Save edits</button></div></details>
-        <div class="row"><button class="btn" data-sched="${s.id}">Schedule</button><button class="btn danger" data-del="${s.id}">Delete</button></div></div>`).join("") || `<div class="meta">No skills yet.</div>`);
+    const data = await api("/api/skills");
+    const installed = data.installed || [];
+    const available = (data.library || []).filter((l) => !l.installed);
+    const agentOpts = (sel) => [`<option value="*" ${sel.includes("*") ? "selected" : ""}>Every agent</option>`]
+      .concat(S.state.agents.map((a) => `<option value="${a.id}" ${!sel.includes("*") && sel.includes(a.id) ? "selected" : ""}>${esc(a.name)}</option>`)).join("");
+    const card = (k) => `
+      <article class="card skill" data-skill="${esc(k.name)}">
+        <div class="skill-head">
+          <h3>${esc(k.name.replace(/-/g, " "))}</h3>
+          <span class="badge ${k.source === "community" && !k.trusted ? "warn" : ""}">${SOURCE_LABEL[k.source] || k.source}${k.source === "community" ? (k.trusted ? " · trusted" : " · untrusted") : ""}</span>
+        </div>
+        <p class="lede">${esc(k.description)}</p>
+        <div class="row">${chips(k.requires)}</div>
+        <div class="meta">${k.source === "learned" ? `Learned by ${esc(k.origin)}` : k.source === "community" ? `From ${esc(k.origin)}` : "Curated by Troupe"}${k.version ? ` · version ${esc(k.version)}` : ""} · ${k.files.length} file${k.files.length === 1 ? "" : "s"}</div>
+        <div class="row">
+          <label class="inline">Available to <select data-assign="${esc(k.name)}">${agentOpts(k.agents)}</select></label>
+          <button class="btn small" data-read="${esc(k.name)}">Read</button>
+          <button class="btn small" data-sched="${esc(k.name)}">Schedule</button>
+          ${k.source === "community" ? `<button class="btn small" data-trust="${esc(k.name)}" data-on="${k.trusted ? 1 : 0}">${k.trusted ? "Untrust" : "Trust"}</button>` : ""}
+          <button class="btn small danger" data-del="${esc(k.name)}">Remove</button>
+        </div>
+        <div class="skill-body hidden" id="body-${esc(k.name)}"></div>
+      </article>`;
+    $("#view-skills").innerHTML = `
+      <section class="intro">
+        <p class="lede">Skills are tested playbooks your agents follow, in the open Agent Skills format, so skills written for Hermes, OpenClaw or agentskills.io work here too.
+        Every skill is scanned before it's installed, its scripts run only inside the agent's own sandbox, and community skills can't send, pay or post without your approval.</p>
+        <p class="meta">Teach one by demonstration: in any room send <code>/teach skill-name @Agent</code>, walk the agent through the task once, then send <code>/done</code>.</p>
+      </section>
+      <section class="card add-skill">
+        <h3>Add a skill</h3>
+        <div class="row nowrap">
+          <label class="sr-only" for="skill-url">Link to a skill</label>
+          <input id="skill-url" placeholder="https://github.com/owner/repo/tree/main/skills/name  or a link to a .zip or SKILL.md">
+          <button class="btn primary" id="skill-inspect">Inspect</button>
+        </div>
+        <div class="row"><label class="link small" for="skill-file">Or upload a .zip or SKILL.md</label><input type="file" id="skill-file" accept=".zip,.md" class="sr-only"></div>
+        <div id="skill-report"></div>
+      </section>
+      <h2 class="section-h">Installed <span class="count">${installed.length}</span></h2>
+      <div class="skill-grid">${installed.map(card).join("") || `<p class="meta">No skills installed.</p>`}</div>
+      ${available.length ? `<h2 class="section-h">From the Troupe library</h2><div class="skill-grid">${available.map((l) => `
+        <article class="card skill"><div class="skill-head"><h3>${esc(l.name.replace(/-/g, " "))}</h3><span class="badge">Built-in</span></div>
+        <p class="lede">${esc(l.description)}</p><div class="row">${chips(l.requires)}</div>
+        <div class="row"><button class="btn small primary" data-lib="${esc(l.name)}">Install</button></div></article>`).join("")}</div>` : ""}`;
     const v = $("#view-skills");
-    v.querySelectorAll("[data-save]").forEach((b) => b.onclick = async () => { await api(`/api/skills/${b.dataset.save}`, { method: "PATCH", body: { playbook: $(`[data-pb="${b.dataset.save}"]`).value } }); });
-    v.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => { if (confirm("Delete this skill?")) { await api(`/api/skills/${b.dataset.del}`, { method: "DELETE" }); renderSkills(); } });
-    v.querySelectorAll("[data-sched]").forEach((b) => b.onclick = () => {
-      const s = rows.find((r) => r.id === b.dataset.sched);
-      newSchedule(s.agent_id, `Use skill ${s.name}` + (s.params.length ? ` with ${s.params.map((p) => `${p}=...`).join(", ")}` : ""));
+    v.querySelectorAll("[data-assign]").forEach((sel) => sel.onchange = async () => {
+      await api(`/api/skills/${sel.dataset.assign}`, { method: "PATCH", body: { agents: [sel.value] } });
     });
+    v.querySelectorAll("[data-read]").forEach((b) => b.onclick = async () => {
+      const box = $(`#body-${b.dataset.read}`);
+      if (!box.classList.contains("hidden")) { box.classList.add("hidden"); return; }
+      const d = await api(`/api/skills/${b.dataset.read}`);
+      box.innerHTML = `<div class="skill-md">${md(d.body)}</div>${d.files.length > 1 ? `<div class="meta">Files: ${d.files.map(esc).join(", ")}</div>` : ""}`;
+      box.classList.remove("hidden");
+    });
+    v.querySelectorAll("[data-trust]").forEach((b) => b.onclick = async () => {
+      const on = b.dataset.on !== "1";
+      if (on && !confirm("Trust this skill? Its tasks will no longer need your approval for outbound actions just because it's a community skill.")) return;
+      await api(`/api/skills/${b.dataset.trust}`, { method: "PATCH", body: { trusted: on } }); renderSkills();
+    });
+    v.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
+      if (!confirm(`Remove the skill “${b.dataset.del}”?`)) return;
+      await api(`/api/skills/${b.dataset.del}`, { method: "DELETE" }); renderSkills();
+    });
+    v.querySelectorAll("[data-lib]").forEach((b) => b.onclick = async () => {
+      await api("/api/skills/install", { method: "POST", body: { library: b.dataset.lib } }); renderSkills();
+    });
+    v.querySelectorAll("[data-sched]").forEach((b) => b.onclick = () => {
+      const k = installed.find((x) => x.name === b.dataset.sched);
+      const owner = k.agents.includes("*") ? S.state.agents[0]?.id : k.agents[0];
+      newSchedule(owner, `Use skill ${k.name}` + (k.params.length ? ` with ${k.params.map((p) => `${p}=...`).join(", ")}` : ""));
+    });
+    const report = $("#skill-report");
+    const showReport = (rep) => {
+      report.innerHTML = rep.skills.map((r) => `
+        <div class="report ${r.blocked ? "blocked" : ""}">
+          <div class="skill-head"><h3>${esc(r.name.replace(/-/g, " "))}</h3>
+            <span class="badge ${r.blocked ? "warn" : "ok"}">${r.blocked ? "Blocked by the safety scan" : "Passed the safety scan"}</span></div>
+          <p class="lede">${esc(r.description)}</p>
+          <div class="row">${chips(r.requires)}</div>
+          ${r.undeclared.length ? `<div class="meta">Not declared by the author, found by the scan: ${r.undeclared.map((n) => esc(NEED_LABEL[n] || n)).join(", ")}</div>` : ""}
+          ${r.findings.length ? `<ul class="findings">${r.findings.map((f) => `<li class="${f.severity}"><strong>${esc(f.label)}</strong> <span class="meta">${esc(f.file)}${f.line ? `:${f.line}` : ""}</span>${f.excerpt ? `<code>${esc(f.excerpt)}</code>` : ""}</li>`).join("")}</ul>` : ""}
+          ${r.problems.length ? `<div class="meta">${r.problems.map(esc).join("; ")}</div>` : ""}
+          <details><summary class="meta">Preview the instructions</summary><div class="skill-md">${md(r.preview)}</div></details>
+          <div class="meta">${r.files.length} file${r.files.length === 1 ? "" : "s"} · ${Math.max(1, Math.round(r.size / 1024))} KB${r.exists ? " · replaces the installed version" : ""}</div>
+        </div>`).join("") + `
+        <div class="row">
+          ${rep.skills.some((r) => r.blocked) ? `<label class="inline danger-text"><input type="checkbox" id="override"> I've read the files and still want to install</label>` : ""}
+          <button class="btn primary" id="skill-install">Install ${rep.skills.length > 1 ? `${rep.skills.length} skills` : ""}</button>
+          <button class="btn" id="skill-cancel">Cancel</button>
+        </div>`;
+      $("#skill-cancel").onclick = () => { report.innerHTML = ""; };
+      $("#skill-install").onclick = async () => {
+        const override = $("#override")?.checked || false;
+        if (rep.skills.some((r) => r.blocked) && !override) { alert("This skill was blocked. Tick the box only if you have read every file and trust it."); return; }
+        await api("/api/skills/install", { method: "POST", body: { staging_id: rep.id, override } });
+        renderSkills();
+      };
+    };
+    const call = async (path, opts) => {
+      report.innerHTML = `<p class="meta">Checking the skill…</p>`;
+      const r = await fetch(path, { ...opts, headers: { Authorization: `Bearer ${S.token}`, ...(opts.headers || {}) } });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { report.innerHTML = `<p class="danger-text">${esc(d.detail || "That didn't work.")}</p>`; return; }
+      showReport(d);
+    };
+    $("#skill-inspect").onclick = () => {
+      const url = $("#skill-url").value.trim();
+      if (url) call("/api/skills/inspect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
+    };
+    $("#skill-file").onchange = (e) => {
+      const f = e.target.files[0];
+      if (f) call("/api/skills/upload", { method: "POST", body: f });
+    };
   }
 
   // ---------- schedules ----------
