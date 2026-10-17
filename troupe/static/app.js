@@ -80,7 +80,7 @@
   }
   // Monogram seal for an agent or room: one letter, two when initials would collide.
   function initials(name) {
-    const n = String(name || "?").trim();
+    const n = String(name || "?").trim().replace(/^(the|a|an)\s+/i, "");
     const parts = n.split(/[\s_-]+/).filter(Boolean);
     if (parts.length > 1) return (parts[0][0] + parts[1][0]).toUpperCase();
     // Two agents sharing a first letter: the one later in the alphabet gets two letters (Chief C, Courier Co).
@@ -157,11 +157,20 @@
   async function loadChat() {
     const room = S.state.rooms.find((r) => r.id === S.room);
     if (!room) { setTitle("No rooms yet"); $("#messages").innerHTML = ""; return; }
-    const members = room.members.map((m) => S.agents[m]?.name).filter(Boolean);
+    // Lead first, then the others in the order they joined.
+    const ids = [room.lead_agent_id, ...room.members.filter((m) => m !== room.lead_agent_id)].filter((m) => S.agents[m]);
+    const members = ids.map((m) => S.agents[m].name);
     setTitle(room.kind === "group" ? room.name : room.name,
              room.kind === "group" ? `Group room · ${members.join(", ")}` : `Private room · ${S.agents[room.members[0]]?.role || "agent"}`);
     const data = await api(`/api/rooms/${room.id}/messages`);
-    $("#messages").innerHTML = data.messages.map(msgHtml).join("");
+    $("#messages").innerHTML = data.messages.map(msgHtml).join("") || `
+      <div class="empty-room">
+        ${mono(room.name, "lg" + (room.kind === "group" ? " group" : ""))}
+        <h2>${esc(room.name)} is ready</h2>
+        <p>${room.kind === "group"
+          ? `Say what you'd like done. ${esc(members[0] || "The lead")} will plan it and share the work with ${esc(members.slice(1).join(" and ") || "the others")}.`
+          : `Say what you'd like ${esc(room.name)} to do. It works on its own computer and asks before anything that matters.`}</p>
+      </div>`;
     setPlan(data.plan);
     setWorking(data.active_tasks);
     const teach = room.teach;
@@ -505,6 +514,10 @@
     const [secrets, sys, buys] = await Promise.all([api("/api/secrets"), api("/api/system"), api("/api/purchases")]);
     const mem = sys.memory_mb || {};
     $("#view-settings").innerHTML = `
+      <div class="card"><h3>Model</h3>
+        <p class="lede">${esc(S.state.default_model)} <span class="meta">· ${esc(S.state.provider === "anthropic" ? "Anthropic" : S.state.provider === "openai_compat" ? "OpenAI-compatible" : S.state.provider)}</span></p>
+        <div class="row"><button class="btn" id="change-model">Change model</button><button class="btn ghost" id="rerun-setup">Run setup again</button></div>
+      </div>
       <div class="card"><h3>System</h3>
         <div class="meta">Provider: ${esc(S.state.provider)} · default model ${esc(S.state.default_model)} · email ${S.state.email_provider === "agentmail" ? "AgentMail" : S.state.email_enabled ? "IMAP/SMTP" : "off"} · SMS ${S.state.sms_enabled ? "on" : "off"}</div>
         <div class="meta">RAM available: ${mem.MemAvailable ?? "?"} / ${mem.MemTotal ?? "?"} MB · running tasks ${sys.running_tasks}/${sys.max_parallel} · sandboxes ${sys.sandboxes.length}/${sys.max_sandboxes}</div>
@@ -529,6 +542,170 @@
     };
     document.querySelectorAll("[data-delsec]").forEach((b) => b.onclick = async () => { await api(`/api/secrets/${encodeURIComponent(b.dataset.delsec)}`, { method: "DELETE" }); renderSettings(); });
     $("#notif").onclick = () => window.Notification && Notification.requestPermission();
+    $("#change-model").onclick = () => wizard("model");
+    $("#rerun-setup").onclick = () => wizard();
+  }
+
+
+  // ---------- setup wizard ----------
+  async function wizard(only) {
+    const st = await api("/api/setup");
+    const all = ["welcome", "password", "model", "team", "channels", "done"];
+    const steps = only ? [only] : all;
+    let i = 0;
+    let picked = { preset: st.model.preset || (st.model.kind === "anthropic" ? "anthropic" : ""), base_url: st.model.base_url || "", api_key: "", models: [], model: "" };
+    const host = document.createElement("div");
+    host.className = "wizard";
+    host.setAttribute("role", "dialog");
+    host.setAttribute("aria-modal", "true");
+    host.setAttribute("aria-label", "Set up Troupe");
+    document.body.appendChild(host);
+    const close = () => { host.remove(); refresh().then(() => show("chat")); };
+
+    const frame = (title, lede, body, actions) => `
+      <div class="wz-card">
+        <div class="wz-top">
+          <svg class="seal" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="30.5"/><circle cx="32" cy="32" r="25.5" class="inner"/><text x="32" y="42" text-anchor="middle">T</text></svg>
+          ${steps.length > 1 ? `<ol class="wz-steps" aria-label="Progress">${steps.slice(1, -1).map((k, n) => `<li class="${steps.indexOf(k) < i ? "done" : steps.indexOf(k) === i ? "now" : ""}">${["Password", "Model", "Team", "Channels"][all.indexOf(k) - 1]}</li>`).join("")}</ol>` : ""}
+        </div>
+        <h1>${title}</h1>
+        ${lede ? `<p class="lede">${lede}</p>` : ""}
+        <div class="wz-body">${body}</div>
+        <div class="wz-error" role="alert"></div>
+        <div class="wz-actions">${actions}</div>
+      </div>`;
+    const err = (m) => { host.querySelector(".wz-error").textContent = m || ""; };
+    const next = () => { i += 1; if (i >= steps.length) close(); else render(); };
+    const busy = (btn, on, label) => { btn.disabled = on; if (label) btn.textContent = label; };
+
+    function render() {
+      const k = steps[i];
+      if (k === "welcome") {
+        host.innerHTML = frame("Welcome to Troupe",
+          "A private household of AI agents that work for you: they plan, research, write, handle your inbox and run errands, and they ask before anything that matters.",
+          `<p class="meta">Setting up takes a few minutes: a password, the AI model your agents use, and the team you want. You can change any of it later.</p>`,
+          `<button class="btn primary" id="wz-go">Begin</button>`);
+        $("#wz-go", host).onclick = next;
+      } else if (k === "password") {
+        host.innerHTML = frame("Choose your password",
+          st.password_set ? "A password is already set. You can keep it or choose a new one." : "You'll use it to sign in from any browser or phone. At least 10 characters; a short phrase is easiest to remember.",
+          `<label>New password<input type="password" id="wz-pw" autocomplete="new-password"></label>
+           <label>Type it again<input type="password" id="wz-pw2" autocomplete="new-password"></label>`,
+          `${st.password_set ? `<button class="btn" id="wz-skip">Keep the current one</button>` : ""}<button class="btn primary" id="wz-save">Save password</button>`);
+        if ($("#wz-skip", host)) $("#wz-skip", host).onclick = next;
+        $("#wz-save", host).onclick = async () => {
+          const a = $("#wz-pw", host).value, b = $("#wz-pw2", host).value;
+          if (a.length < 10) return err("Use at least 10 characters.");
+          if (a !== b) return err("The two passwords don't match.");
+          const r = await fetch("/api/setup/password", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${S.token}` }, body: JSON.stringify({ password: a }) });
+          if (!r.ok) return err((await r.json()).detail);
+          st.password_set = true; next();
+        };
+      } else if (k === "model") {
+        const cur = st.model;
+        const curLine = cur.model && cur.kind !== "mock" ? `<p class="meta">Currently using <strong>${esc(cur.model)}</strong>${cur.base_url ? ` via ${esc(cur.base_url)}` : ""}.</p>` : "";
+        const cards = Object.entries(st.presets).map(([id, p]) => `
+          <button type="button" class="wz-option ${picked.preset === id ? "chosen" : ""}" data-preset="${id}" aria-pressed="${picked.preset === id}">
+            <span class="name">${esc(p.label)}</span><span class="by">${esc(p.by)}</span></button>`).join("");
+        const p = st.presets[picked.preset];
+        const endpoints = p ? [p.base_url, ...(p.alt_base_urls || [])].filter(Boolean) : [];
+        const form = !p ? "" : `
+          <div class="wz-fields">
+            ${p.kind !== "anthropic" ? (endpoints.length > 1
+              ? `<label>Region<select id="wz-base">${endpoints.map((u) => `<option ${u === (picked.base_url || p.base_url) ? "selected" : ""}>${esc(u)}</option>`).join("")}</select></label>`
+              : `<label>Endpoint<input id="wz-base" value="${esc(picked.base_url || p.base_url)}" placeholder="https://…/v1"></label>`) : ""}
+            ${p.no_key ? "" : `<label><span class="label-row">API key ${p.keys_url ? `<a href="${esc(p.keys_url)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</span><input type="password" id="wz-key" placeholder="${esc(p.key_hint || "")}" autocomplete="off"></label>
+            ${cur.key_saved && cur.preset === picked.preset ? `<label class="inline"><input type="checkbox" id="wz-usesaved"> Keep the key that's already saved</label>` : ""}`}
+            <div class="row"><button class="btn" id="wz-connect">Connect</button><span class="meta" id="wz-conn"></span></div>
+            ${picked.models.length ? `<label>Model<select id="wz-model">${picked.models.slice(0, 300).map((m) => `<option ${m === (cur.model || p.default) ? "selected" : ""}>${esc(m)}</option>`).join("")}</select></label>` : ""}
+          </div>`;
+        host.innerHTML = frame("Choose the AI your agents think with",
+          "Your key is stored encrypted on your server and never shown to the agents.",
+          `${curLine}<div class="wz-options">${cards}</div>${form}`,
+          `${!only ? `<button class="btn" id="wz-skip">${cur.model && cur.kind !== "mock" ? `Keep ${esc(cur.model)}` : "Decide later"}</button>` : ""}${only ? `<button class="btn" id="wz-cancel">Cancel</button>` : ""}<button class="btn primary" id="wz-save" ${picked.models.length ? "" : "disabled"}>Use this model</button>`);
+        host.querySelectorAll("[data-preset]").forEach((b) => b.onclick = () => { picked = { preset: b.dataset.preset, base_url: "", api_key: "", models: [], model: "" }; render(); });
+        if ($("#wz-skip", host)) $("#wz-skip", host).onclick = next;
+        if ($("#wz-cancel", host)) $("#wz-cancel", host).onclick = close;
+        const body = () => ({ preset: picked.preset, base_url: $("#wz-base", host)?.value || "", api_key: $("#wz-key", host)?.value || picked.api_key || "",
+                               use_saved_key: !!$("#wz-usesaved", host)?.checked });
+        if ($("#wz-connect", host)) $("#wz-connect", host).onclick = async (e) => {
+          err(""); busy(e.target, true, "Connecting…");
+          const b = body();
+          const r = await fetch("/api/setup/models", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${S.token}` }, body: JSON.stringify(b) });
+          const d = await r.json().catch(() => ({}));
+          busy(e.target, false, "Connect");
+          if (!r.ok) return err(d.detail || "Couldn't connect.");
+          picked = { ...picked, base_url: b.base_url, api_key: b.api_key, models: d.models, use_saved_key: b.use_saved_key };
+          render();
+          $("#wz-conn", host).textContent = `Connected · ${d.models.length} model${d.models.length === 1 ? "" : "s"} available`;
+        };
+        $("#wz-save", host).onclick = async (e) => {
+          err(""); busy(e.target, true, "Saving…");
+          const r = await fetch("/api/setup/model", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${S.token}` },
+            body: JSON.stringify({ preset: picked.preset, base_url: picked.base_url, api_key: picked.api_key, use_saved_key: picked.use_saved_key, model: $("#wz-model", host).value }) });
+          const d = await r.json().catch(() => ({}));
+          busy(e.target, false, "Use this model");
+          if (!r.ok) return err(d.detail || "Couldn't save.");
+          picked.api_key = ""; st.model = d.model; next();
+        };
+      } else if (k === "team") {
+        host.innerHTML = frame("Choose your troupe",
+          "Each agent has a name, a standing role and its own private computer. They work together in a shared room, and you make the final calls.",
+          `${st.agents ? `<p class="meta">You already have ${st.agents} agent${st.agents === 1 ? "" : "s"}. Choosing a team adds any that are missing.</p>` : ""}
+           <div class="wz-teams">${Object.entries(st.teams).map(([id, t]) => `
+             <button type="button" class="wz-team ${st.team === id ? "chosen" : ""}" data-team="${id}">
+               <span class="name">${esc(t.label)}</span>
+               <span class="lede-sm">${esc(t.lede)}</span>
+               <span class="members">${t.agents.map((a) => `<span class="member">${mono(a.name, "sm")}<span><strong>${esc(a.name)}</strong><span class="meta"> — ${esc(a.role.split(":")[0])}</span></span></span>`).join("")}</span>
+             </button>`).join("")}</div>`,
+          `${st.agents ? `<button class="btn" id="wz-skip">Keep my agents</button>` : ""}`);
+        if ($("#wz-skip", host)) $("#wz-skip", host).onclick = next;
+        host.querySelectorAll("[data-team]").forEach((b) => b.onclick = async () => {
+          b.classList.add("chosen");
+          const r = await fetch("/api/setup/team", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${S.token}` }, body: JSON.stringify({ preset: b.dataset.team }) });
+          if (!r.ok) return err((await r.json()).detail);
+          const d = await r.json(); S.room = d.room_id; st.team = b.dataset.team; next();
+        });
+      } else if (k === "channels") {
+        host.innerHTML = frame("Reach your troupe beyond this page",
+          "Both are optional and can be added later in Vault & system.",
+          `<div class="wz-fields">
+             <fieldset><legend>Email for every agent <span class="meta">via AgentMail</span></legend>
+               ${st.agentmail ? `<p class="meta">Connected. Each agent has its own inbox.</p>` : `<label><span class="label-row">AgentMail API key <a href="https://console.agentmail.to" target="_blank" rel="noopener noreferrer">Get a key</a></span><input type="password" id="wz-am" placeholder="am_…" autocomplete="off"></label>`}
+             </fieldset>
+             <fieldset><legend>Telegram <span class="meta">message your agents from your phone</span></legend>
+               ${st.telegram ? `<p class="meta">Connected.</p>` : `<label><span class="label-row">Bot token <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">Create a bot</a></span><input type="password" id="wz-tg" placeholder="123456:ABC…" autocomplete="off"></label>
+               <label>Your Telegram user ID <span class="meta">(ask @userinfobot)</span><input id="wz-tgid" inputmode="numeric" placeholder="e.g. 123456789"></label>`}
+             </fieldset>
+           </div>`,
+          `<button class="btn" id="wz-skip">Skip for now</button><button class="btn primary" id="wz-save">Save and continue</button>`);
+        $("#wz-skip", host).onclick = next;
+        $("#wz-save", host).onclick = async () => {
+          const body = { agentmail_api_key: $("#wz-am", host)?.value || "", telegram_token: $("#wz-tg", host)?.value || "", telegram_owner_id: $("#wz-tgid", host)?.value || "" };
+          if (body.telegram_token && !/^\d+$/.test(body.telegram_owner_id)) return err("Add your numeric Telegram user ID so only you can talk to the bot.");
+          const r = await fetch("/api/setup/channels", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${S.token}` }, body: JSON.stringify(body) });
+          if (!r.ok) return err((await r.json()).detail);
+          next();
+        };
+      } else if (k === "done") {
+        host.innerHTML = frame("Your troupe is ready",
+          "Say what you want done, the way you'd ask a capable person. A few ways to begin:",
+          `<ul class="wz-ideas">
+             <li>“Plan a quiet weekend away next month, under €800.”</li>
+             <li>“Every weekday at 8, send me a morning briefing.”</li>
+             <li>“Research the three best options for a family car and compare them.”</li>
+             <li>“/teach weekly-report” — then show an agent how you do something once.</li>
+           </ul>`,
+          `<button class="btn primary" id="wz-finish">Open my troupe</button>`);
+        $("#wz-finish", host).onclick = async () => {
+          await fetch("/api/setup/finish", { method: "POST", headers: { Authorization: `Bearer ${S.token}` } });
+          close();
+        };
+      }
+      const first = host.querySelector("input, select, .btn.primary");
+      if (first) first.focus();
+    }
+    render();
   }
 
   // ---------- boot ----------
@@ -538,6 +715,7 @@
     try { await refresh(); } catch { return; }
     $("#login").classList.add("hidden"); $("#app").classList.remove("hidden");
     show("chat"); connect();
+    if (!S.state.setup_done) wizard();
   }
   boot();
 })();

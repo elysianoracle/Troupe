@@ -168,6 +168,7 @@ def build_api(app) -> FastAPI:
             "rooms": rooms,
             "approvals": pending_approvals(),
             "paused": app.guard.paused(),
+            "setup_done": app.setup_done,
             "provider": app.settings.llm_provider,
             "default_model": app.settings.default_model,
             "email_enabled": app.email.enabled,
@@ -182,6 +183,115 @@ def build_api(app) -> FastAPI:
         for r in rows:
             r["args"] = loads(r["args"], {})
         return rows
+
+    # --- setup wizard and model settings ---------------------------------------------------------------
+    from .. import models as model_cfg
+    from ..teams import TEAMS, create_team
+
+    def model_state() -> dict:
+        cfg = model_cfg.current(db)
+        return {"source": "app" if cfg else "environment", "preset": (cfg or {}).get("preset", ""),
+                "kind": app.settings.llm_provider, "model": app.settings.default_model,
+                "base_url": (cfg or {}).get("base_url", "") or (app.settings.openai_base_url if app.settings.llm_provider == "openai_compat" else ""),
+                "key_saved": bool(app.vault.get("llm_api_key"))}
+
+    @api.get("/api/setup", dependencies=[A])
+    async def setup_state():
+        return {
+            "done": app.setup_done, "password_set": app.auth.password_set,
+            "model": model_state(),
+            "presets": {k: {kk: vv for kk, vv in v.items()} for k, v in model_cfg.PRESETS.items()},
+            "teams": {k: {"label": t["label"], "lede": t["lede"], "room": t["room"],
+                          "agents": [{"name": n, "role": r} for n, r, _ in t["agents"]]} for k, t in TEAMS.items()},
+            "agents": len(db.all("SELECT id FROM agents")),
+            "team": db.kv_get("setup:team"),
+            "agentmail": app.email.agentmail.enabled,
+            "telegram": bool(app.vault.get("telegram_token") or app.settings.telegram_token),
+            "public_url": app.settings.public_url,
+        }
+
+    @api.post("/api/setup/password", dependencies=[A])
+    async def setup_password(body: dict):
+        try:
+            app.auth.set_password(str(body.get("password", "")))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True}
+
+    @api.post("/api/setup/models", dependencies=[A])
+    async def setup_list_models(body: dict):
+        preset = str(body.get("preset", ""))
+        key = str(body.get("api_key", "")) or (app.vault.get("llm_api_key") or "" if body.get("use_saved_key") else "")
+        try:
+            return {"models": await model_cfg.list_models(preset, str(body.get("base_url", "")), key)}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @api.post("/api/setup/model", dependencies=[A])
+    async def setup_model(body: dict):
+        preset = str(body.get("preset", ""))
+        p = model_cfg.PRESETS.get(preset)
+        model = str(body.get("model", "")).strip()
+        if not p or not model:
+            raise HTTPException(400, "choose a provider and a model")
+        key = str(body.get("api_key", "")) or (app.vault.get("llm_api_key") or "" if body.get("use_saved_key") else "")
+        base = str(body.get("base_url", "")).strip() or p["base_url"]
+        try:
+            available = await model_cfg.list_models(preset, base, key)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if model not in available:
+            raise HTTPException(400, "that model isn't available for this key")
+        if key:
+            app.vault.set("llm_api_key", key)
+        model_cfg.save(db, {"preset": preset, "kind": p["kind"], "base_url": base if p["kind"] != "anthropic" else "",
+                            "model": model})
+        app.reload_llm()
+        return {"ok": True, "model": model_state()}
+
+    @api.post("/api/setup/team", dependencies=[A])
+    async def setup_team(body: dict):
+        try:
+            return create_team(app, str(body.get("preset", "")))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @api.post("/api/setup/channels", dependencies=[A])
+    async def setup_channels(body: dict):
+        out = {}
+        if body.get("agentmail_api_key"):
+            app.vault.set("agentmail_api_key", str(body["agentmail_api_key"]).strip())
+            out["agentmail"] = True
+        if body.get("telegram_token"):
+            app.vault.set("telegram_token", str(body["telegram_token"]).strip())
+            if body.get("telegram_owner_id"):
+                db.kv_set("config:telegram_owner", str(body["telegram_owner_id"]).strip())
+            out["telegram"] = app.start_telegram()
+        return out
+
+    @api.post("/api/setup/finish", dependencies=[A])
+    async def setup_finish():
+        if not db.one("SELECT id FROM agents LIMIT 1"):
+            create_team(app, "personal")
+        db.kv_set("setup:done", "1")
+        db.audit("system", "setup_finished")
+        return {"ok": True}
+
+    @api.get("/api/settings/prices", dependencies=[A])
+    async def get_prices():
+        return model_cfg.custom_prices(db)
+
+    @api.post("/api/settings/prices", dependencies=[A])
+    async def set_prices(body: dict):
+        clean = {}
+        for m, v in (body or {}).items():
+            try:
+                clean[str(m)] = [float(v[0]), float(v[1])]
+            except (TypeError, ValueError, IndexError):
+                raise HTTPException(400, f"price for {m} must be [input, output] in $ per million tokens")
+        db.kv_set("config:prices", json.dumps(clean))
+        app.reload_llm()
+        return clean
 
     @api.post("/api/pause", dependencies=[A])
     async def pause(body: dict):

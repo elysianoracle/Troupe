@@ -54,8 +54,15 @@ class LLMResponse:
         return [b for b in self.content if b.get("type") == "tool_use"]
 
 
+# Owner-entered prices ($ per 1M input/output tokens) for models Troupe has no table for.
+CUSTOM_PRICES: dict[str, list[float]] = {}
+
+
 def estimate_cost(model: str, inp: int, out: int, cache_read: int, cache_write: int) -> float:
     p = PRICES.get(model)
+    if not p and model in CUSTOM_PRICES:
+        c = CUSTOM_PRICES[model]
+        p = (float(c[0]), float(c[1]), float(c[0]))
     if not p:
         return 0.0
     return (inp * p[0] + out * p[1] + cache_read * p[2] + cache_write * p[0] * 1.25) / 1_000_000
@@ -64,11 +71,11 @@ def estimate_cost(model: str, inp: int, out: int, cache_read: int, cache_write: 
 class AnthropicProvider:
     name = "anthropic"
 
-    def __init__(self, effort: str, enable_fallbacks: bool, enable_web_search: bool):
+    def __init__(self, effort: str, enable_fallbacks: bool, enable_web_search: bool, api_key: str | None = None):
         import anthropic  # imported lazily so the mock/openai paths don't need it
 
         self._anthropic = anthropic
-        self.client = anthropic.AsyncAnthropic()
+        self.client = anthropic.AsyncAnthropic(api_key=api_key) if api_key else anthropic.AsyncAnthropic()
         self.effort = effort
         self.enable_fallbacks = enable_fallbacks
         self.enable_web_search = enable_web_search
@@ -211,6 +218,7 @@ class OpenAICompatProvider:
             content=content or [{"type": "text", "text": ""}],
             stop_reason="tool_use" if msg.get("tool_calls") else "end_turn",
             input_tokens=usage.get("prompt_tokens", 0), output_tokens=usage.get("completion_tokens", 0),
+            cost_usd=estimate_cost(model, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), 0, 0),
         )
 
 
@@ -240,7 +248,12 @@ class MockProvider:
                            input_tokens=100, output_tokens=20, cost_usd=r.get("cost_usd", 0.001))
 
 
-def make_provider(settings) -> Any:
+def make_provider(settings, cfg: dict | None = None, api_key: str = "") -> Any:
+    """Build the provider from the owner's saved choice (cfg + vault key), else from the environment."""
+    if cfg:
+        if cfg.get("kind") == "anthropic":
+            return AnthropicProvider(settings.effort, settings.enable_fallbacks, settings.enable_web_search, api_key or None)
+        return OpenAICompatProvider(cfg["base_url"], api_key or "none")
     if settings.llm_provider == "anthropic":
         return AnthropicProvider(settings.effort, settings.enable_fallbacks, settings.enable_web_search)
     if settings.llm_provider == "openai_compat":

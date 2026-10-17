@@ -55,7 +55,8 @@ class App:
         self.auth = Auth(self.db, settings.admin_token)
         self.skills = SkillStore(settings.data_dir, self.db)
         self.guard = Guardrails(self.db)
-        self.llm = llm or make_provider(settings)
+        self._fixed_llm = llm is not None
+        self.llm = llm or self.build_llm()
         self.sandbox = sandbox or SandboxManager(settings)
         self.events = Events()
         self.email = Mailer(Email(settings), AgentMail(settings, self.db, self.vault))
@@ -76,9 +77,7 @@ class App:
                      asyncio.create_task(self.sandbox.reaper())]
         # Always running: AgentMail can be switched on later by adding its key in the Vault.
         self._bg.append(asyncio.create_task(triggers.email_poller(self)))
-        if self.settings.telegram_token:
-            from .surfaces.telegram import TelegramBot
-            self._bg.append(asyncio.create_task(TelegramBot(self).run()))
+        self.start_telegram()
         log.info("Troupe started (provider=%s, model=%s, sandbox=%s)", self.settings.llm_provider,
                  self.settings.default_model, self.settings.sandbox_backend)
 
@@ -149,6 +148,43 @@ class App:
             self.orch.wake()
         self.events.publish("approval_decided", {"id": approval_id, "status": status})
         return self.db.one("SELECT * FROM approvals WHERE id = ?", (approval_id,))
+
+    def start_telegram(self) -> bool:
+        token = self.vault.get("telegram_token") or self.settings.telegram_token
+        owner = self.db.kv_get("config:telegram_owner") or self.settings.telegram_owner_id
+        if not token or getattr(self, "_telegram", None):
+            return bool(getattr(self, "_telegram", None))
+        from .surfaces.telegram import TelegramBot
+        self.settings.telegram_token, self.settings.telegram_owner_id = token, owner
+        self._telegram = asyncio.create_task(TelegramBot(self).run())
+        self._bg.append(self._telegram)
+        return True
+
+    def build_llm(self):
+        """The model the owner chose in the app wins over environment variables."""
+        from . import models
+        from .llm import CUSTOM_PRICES
+        CUSTOM_PRICES.clear()
+        CUSTOM_PRICES.update(models.custom_prices(self.db))
+        cfg = models.current(self.db)
+        if cfg:
+            self.settings.llm_provider = cfg["kind"]
+            self.settings.default_model = cfg["model"]
+            if cfg.get("base_url"):
+                self.settings.openai_base_url = cfg["base_url"]
+            return make_provider(self.settings, cfg, self.vault.get("llm_api_key") or "")
+        return make_provider(self.settings)
+
+    def reload_llm(self) -> None:
+        if not self._fixed_llm:
+            self.llm = self.build_llm()
+
+    @property
+    def setup_done(self) -> bool:
+        if self.db.kv_get("setup:done") == "1":
+            return True
+        # Installs from before the wizard: configured through the environment and already have a team.
+        return self.settings.llm_provider != "mock" and bool(self.db.one("SELECT id FROM agents LIMIT 1"))             and bool(self.auth.password_set or self.db.kv_get("config:llm"))
 
     def prepare_skills(self) -> None:
         """First run installs the curated library; older databases' playbooks move to SKILL.md folders."""

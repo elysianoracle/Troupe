@@ -30,9 +30,13 @@ def main() -> None:
         seed(app)
         return
 
-    seed(app)
+    if app.setup_done:
+        seed(app)
     api = build_api(app)
-    print(f"\n  Troupe UI: {settings.public_url}/?token={settings.admin_token}\n")
+    if app.setup_done:
+        print(f"\n  Troupe: {settings.public_url}\n")
+    else:
+        print(f"\n  Finish setting up Troupe: {settings.public_url}/?token={settings.admin_token}\n")
     uvicorn.run(api, host=settings.host, port=settings.port, log_level="warning")
 
 
@@ -53,22 +57,12 @@ def set_password(settings) -> None:
 
 
 def seed(app: App) -> None:
-    """A starter team, like Grok Bot's named roster: a lead, a researcher, and an inbox handler."""
+    """The personal starter team (Chief, Scout, Courier). The setup wizard offers other teams."""
     if app.db.one("SELECT id FROM agents LIMIT 1"):
         return
-    lead = app.create_agent(
-        "Chief", "Chief of staff: turns goals into plans, delegates, and reports back.",
-        "Keep the owner's time sacred. Batch questions. For group goals, write a plan with update_plan, hand "
-        "research to Scout and inbox work to Courier, then synthesize a short recommendation.")
-    scout = app.create_agent(
-        "Scout", "Researcher: web research, comparisons, prices, summaries with sources.",
-        "Cite sources with URLs. Prefer browser fetch for simple pages; use the full browser for interactive "
-        "sites. Save useful findings with remember.")
-    courier = app.create_agent(
-        "Courier", "Inbox and errands: triages email, drafts replies, follows up, books things.",
-        "Draft before sending. Summarize inbound mail in two lines and propose an action.")
-    app.create_room("Team", "group", [lead["id"], scout["id"], courier["id"]], lead=lead["id"])
-    logging.getLogger("troupe").info("seeded starter team: Chief, Scout, Courier")
+    from .teams import create_team
+    create_team(app, "personal")
+    logging.getLogger("troupe").info("created the personal team: Chief, Scout, Courier")
 
 
 if __name__ == "__main__":
