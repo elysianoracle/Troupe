@@ -1,0 +1,13 @@
+# Troupe behind Caddy: automatic HTTPS (Let's Encrypt), HTTP redirects to HTTPS.
+# Replace the hostname with your own domain, or use <your-ip-with-dashes>.sslip.io if you have none.
+troupe.example.com {
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+	reverse_proxy 127.0.0.1:8080
+}

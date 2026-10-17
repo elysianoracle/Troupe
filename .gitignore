@@ -1,0 +1,10 @@
+.venv/
+data/
+__pycache__/
+*.egg-info/
+.env
+.pytest_cache/
+build/
+dist/
+*.spec
+desktop/troupe.png

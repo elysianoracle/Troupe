@@ -1,0 +1,24 @@
+[Unit]
+Description=Troupe personal agent team
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+User=troupe
+Group=troupe
+WorkingDirectory=/opt/troupe
+EnvironmentFile=/etc/troupe/troupe.env
+Environment=TROUPE_ENV_FILE=/etc/troupe/troupe.env
+ExecStart=/opt/troupe/.venv/bin/troupe serve
+Restart=always
+RestartSec=5
+MemoryMax=1500M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/troupe
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

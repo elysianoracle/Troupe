@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Troupe</title>
+  <meta name="theme-color" content="#14161a">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css?v=0.1.5">
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <form id="login-form">
+      <h1>Troupe</h1>
+      <p id="login-hint">Sign in with your Troupe password.</p>
+      <input id="username" type="text" value="owner" autocomplete="username" hidden>
+      <input id="token-input" type="password" placeholder="Password" autocomplete="current-password" autofocus>
+      <div id="login-error" class="login-error"></div>
+      <button type="submit" class="send">Sign in</button>
+      <button type="button" class="link" id="token-mode">Use the admin token instead</button>
+    </form>
+  </div>
+
+  <div id="app" class="app hidden">
+    <aside id="sidebar" class="sidebar">
+      <div class="brand">
+        <span>Troupe</span>
+        <span class="row" style="gap:6px"><button id="pause-btn" class="pill" title="Pause or resume every agent">Pause all</button>
+        <button id="logout-btn" class="pill" title="Sign out of this device">Sign out</button></span>
+      </div>
+      <nav class="tabs" id="tabs">
+        <button data-view="chat" class="active">Chat</button>
+        <button data-view="agents">Agents</button>
+        <button data-view="skills">Skills</button>
+        <button data-view="schedules">Schedules</button>
+        <button data-view="audit">Activity</button>
+        <button data-view="settings">Vault &amp; system</button>
+      </nav>
+      <div class="section-title">Rooms <button id="new-room" class="link">+ group</button></div>
+      <ul id="room-list" class="room-list"></ul>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button id="menu-btn" class="icon-btn" aria-label="Menu">☰</button>
+        <div id="title" class="title">Chat</div>
+        <div id="status" class="status"></div>
+      </header>
+
+      <div id="approvals" class="approvals"></div>
+
+      <section id="view-chat" class="view">
+        <details id="plan" class="plan hidden"><summary>Plan</summary><div id="plan-body"></div></details>
+        <div id="teach-banner" class="teach hidden"></div>
+        <div id="messages" class="messages"></div>
+        <div id="working" class="working"></div>
+        <form id="composer" class="composer">
+          <button type="button" id="mic" class="icon-btn" title="Dictate">🎙</button>
+          <textarea id="input" rows="1" placeholder="Message… (@name to address one agent, /help)"></textarea>
+          <button type="submit" class="send">Send</button>
+        </form>
+        <label class="speak"><input type="checkbox" id="speak"> Read replies aloud</label>
+      </section>
+
+      <section id="view-agents" class="view hidden"></section>
+      <section id="view-skills" class="view hidden"></section>
+      <section id="view-schedules" class="view hidden"></section>
+      <section id="view-audit" class="view hidden"></section>
+      <section id="view-settings" class="view hidden"></section>
+    </main>
+  </div>
+
+  <dialog id="dialog"><form method="dialog" id="dialog-form"></form></dialog>
+  <script src="/static/app.js?v=0.1.5"></script>
+</body>
+</html>
