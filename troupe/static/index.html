@@ -4,20 +4,35 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Troupe</title>
-  <meta name="theme-color" content="#14161a">
+  <meta name="theme-color" content="#F6F1E7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16130F" media="(prefers-color-scheme: dark)">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/style.css?v=0.1.5">
+  <link rel="preload" href="/static/fonts/cormorant-garamond-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/fonts/instrument-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/static/style.css?v=1.0.0">
 </head>
 <body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 4h6l-1 6 3 3H7l3-3-1-6zM12 13v7"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/></symbol>
+  </svg>
+
   <div id="login" class="login hidden">
-    <form id="login-form">
+    <form id="login-form" class="login-card">
+      <svg class="seal seal-lg" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="30.5"/><circle cx="32" cy="32" r="25.5" class="inner"/><text x="32" y="42" text-anchor="middle">T</text></svg>
       <h1>Troupe</h1>
-      <p id="login-hint">Sign in with your Troupe password.</p>
+      <p id="login-hint" class="muted">Sign in with your Troupe password.</p>
       <input id="username" type="text" value="owner" autocomplete="username" hidden>
+      <label for="token-input" class="sr-only">Password</label>
       <input id="token-input" type="password" placeholder="Password" autocomplete="current-password" autofocus>
-      <div id="login-error" class="login-error"></div>
-      <button type="submit" class="send">Sign in</button>
+      <div id="login-error" class="login-error" role="alert"></div>
+      <button type="submit" class="btn primary wide">Sign in</button>
       <button type="button" class="link" id="token-mode">Use the admin token instead</button>
     </form>
   </div>
@@ -25,40 +40,49 @@
   <div id="app" class="app hidden">
     <aside id="sidebar" class="sidebar">
       <div class="brand">
-        <span>Troupe</span>
-        <span class="row" style="gap:6px"><button id="pause-btn" class="pill" title="Pause or resume every agent">Pause all</button>
-        <button id="logout-btn" class="pill" title="Sign out of this device">Sign out</button></span>
+        <svg class="seal" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="30.5"/><circle cx="32" cy="32" r="25.5" class="inner"/><text x="32" y="42" text-anchor="middle">T</text></svg>
+        <span class="wordmark">Troupe</span>
       </div>
-      <nav class="tabs" id="tabs">
-        <button data-view="chat" class="active">Chat</button>
+      <nav class="tabs" id="tabs" aria-label="Main">
+        <button data-view="chat" class="active">Conversations</button>
         <button data-view="agents">Agents</button>
         <button data-view="skills">Skills</button>
         <button data-view="schedules">Schedules</button>
         <button data-view="audit">Activity</button>
         <button data-view="settings">Vault &amp; system</button>
       </nav>
-      <div class="section-title">Rooms <button id="new-room" class="link">+ group</button></div>
+      <div class="section-title"><span>Rooms</span><button id="new-room" class="link small" title="New group room"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg> Group</button></div>
       <ul id="room-list" class="room-list"></ul>
+      <div class="sidebar-foot">
+        <button id="pause-btn" class="btn ghost small" title="Pause or resume every agent">Pause all</button>
+        <button id="logout-btn" class="btn ghost small" title="Sign out of this device">Sign out</button>
+      </div>
     </aside>
 
     <main class="main">
       <header class="topbar">
-        <button id="menu-btn" class="icon-btn" aria-label="Menu">☰</button>
-        <div id="title" class="title">Chat</div>
-        <div id="status" class="status"></div>
+        <button id="menu-btn" class="icon-btn" aria-label="Menu"><svg class="icon" aria-hidden="true"><use href="#i-menu"/></svg></button>
+        <div class="title-block">
+          <div id="eyebrow" class="eyebrow"></div>
+          <h1 id="title" class="title">Conversations</h1>
+        </div>
+        <div id="status" class="status" aria-live="polite"></div>
       </header>
 
-      <div id="approvals" class="approvals"></div>
+      <div id="approvals" class="approvals" aria-live="polite"></div>
 
-      <section id="view-chat" class="view">
-        <details id="plan" class="plan hidden"><summary>Plan</summary><div id="plan-body"></div></details>
-        <div id="teach-banner" class="teach hidden"></div>
+      <section id="view-chat" class="view chat">
+        <div class="chat-head">
+          <details id="plan" class="plan hidden"><summary>The plan</summary><div id="plan-body"></div></details>
+          <div id="teach-banner" class="teach hidden"></div>
+        </div>
         <div id="messages" class="messages"></div>
         <div id="working" class="working"></div>
         <form id="composer" class="composer">
-          <button type="button" id="mic" class="icon-btn" title="Dictate">🎙</button>
-          <textarea id="input" rows="1" placeholder="Message… (@name to address one agent, /help)"></textarea>
-          <button type="submit" class="send">Send</button>
+          <button type="button" id="mic" class="icon-btn" title="Dictate" aria-label="Dictate"><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg></button>
+          <label for="input" class="sr-only">Message</label>
+          <textarea id="input" rows="1" placeholder="Write to your troupe…"></textarea>
+          <button type="submit" class="btn primary send" aria-label="Send">Send</button>
         </form>
         <label class="speak"><input type="checkbox" id="speak"> Read replies aloud</label>
       </section>
@@ -72,6 +96,6 @@
   </div>
 
   <dialog id="dialog"><form method="dialog" id="dialog-form"></form></dialog>
-  <script src="/static/app.js?v=0.1.5"></script>
+  <script src="/static/app.js?v=1.0.0"></script>
 </body>
 </html>

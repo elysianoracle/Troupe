@@ -78,6 +78,19 @@
       return h.split(/\n{2,}/).map((p) => p.trim() ? `<p>${p.replace(/\n/g, "<br>")}</p>` : "").join("");
     }).join("");
   }
+  // Monogram seal for an agent or room: one letter, two when initials would collide.
+  function initials(name) {
+    const n = String(name || "?").trim();
+    const parts = n.split(/[\s_-]+/).filter(Boolean);
+    if (parts.length > 1) return (parts[0][0] + parts[1][0]).toUpperCase();
+    // Two agents sharing a first letter: the one later in the alphabet gets two letters (Chief C, Courier Co).
+    const names = Object.values(S.agents || {}).map((a) => a.name);
+    const clash = names.some((o) => o !== n && o[0]?.toUpperCase() === n[0]?.toUpperCase() && o.localeCompare(n) < 0);
+    return clash ? n[0].toUpperCase() + n.slice(1, 2).toLowerCase() : n[0].toUpperCase();
+  }
+  const mono = (name, extra = "") => `<span class="mono ${extra}" aria-hidden="true">${esc(initials(name))}</span>`;
+  const icon = (id) => `<svg class="icon" aria-hidden="true"><use href="#i-${id}"/></svg>`;
+  function setTitle(title, eyebrow = "") { $("#title").textContent = title; $("#eyebrow").textContent = eyebrow; }
   const ago = (ts) => {
     const s = Date.now() / 1000 - ts;
     if (s < 60) return "now"; if (s < 3600) return `${Math.floor(s / 60)}m`; if (s < 86400) return `${Math.floor(s / 3600)}h`;
@@ -94,7 +107,7 @@
     }
     renderSidebar(); renderApprovals();
     const pb = $("#pause-btn");
-    pb.textContent = S.state.paused ? "Paused · resume" : "Pause all";
+    pb.textContent = S.state.paused ? "Paused — resume" : "Pause all";
     pb.classList.toggle("on", S.state.paused);
   }
   function renderSidebar() {
@@ -102,23 +115,25 @@
       const sub = r.kind === "group" ? r.members.map((m) => S.agents[m]?.name).filter(Boolean).join(", ")
                                      : (S.agents[r.members[0]]?.role || "");
       return `<li><button data-room="${r.id}" class="${r.id === S.room && S.view === "chat" ? "active" : ""}">
-        ${r.kind === "group" ? "👥" : "🤖"} ${esc(r.name)}<span class="sub">${esc(sub)}</span></button></li>`;
+        ${mono(r.name, "sm" + (r.kind === "group" ? " group" : ""))}<span class="txt"><span class="name">${esc(r.name)}</span><span class="sub">${esc(sub)}</span></span></button></li>`;
     }).join("");
     document.querySelectorAll("[data-room]").forEach((b) => b.onclick = () => { S.room = b.dataset.room; show("chat"); closeMenu(); });
   }
   function renderApprovals() {
     const list = S.state.approvals || [];
     $("#approvals").innerHTML = list.map((a) => `
-      <div class="approval" data-id="${a.id}">
-        <div><strong>${esc(a.agent_name)}</strong> wants to run <code>${esc(a.tool)}</code></div>
+      <section class="approval" data-id="${a.id}" aria-label="Approval needed">
+        <div class="kicker">${icon("lock")} Your approval</div>
+        <div><strong>${esc(a.agent_name)}</strong> would like to run <code>${esc(a.tool)}</code>.</div>
         <div class="why">${esc(a.reason)}</div>
-        <pre>${esc(JSON.stringify(a.args, null, 2)).slice(0, 2000)}</pre>
+        <details><summary class="meta">Details</summary><pre>${esc(JSON.stringify(a.args, null, 2)).slice(0, 2000)}</pre></details>
         <div class="actions">
           <button class="btn primary" data-act="y">Approve</button>
-          <button class="btn danger" data-act="n">Deny</button>
-          <input placeholder="Optional note to the agent" style="flex:1;min-width:160px">
+          <button class="btn" data-act="n">Decline</button>
+          <label class="sr-only" for="note-${a.id}">Note to the agent</label>
+          <input id="note-${a.id}" placeholder="Optional note to ${esc(a.agent_name)}">
         </div>
-      </div>`).join("");
+      </section>`).join("");
     document.querySelectorAll(".approval").forEach((el) => el.querySelectorAll("[data-act]").forEach((b) => b.onclick = async () => {
       await api(`/api/approvals/${el.dataset.id}`, { method: "POST", body: { approve: b.dataset.act === "y", note: $("input", el).value } });
       refresh();
@@ -141,8 +156,10 @@
   // ---------- chat ----------
   async function loadChat() {
     const room = S.state.rooms.find((r) => r.id === S.room);
-    if (!room) { $("#title").textContent = "No rooms yet"; $("#messages").innerHTML = ""; return; }
-    $("#title").textContent = room.name + (room.kind === "group" ? " · group" : "");
+    if (!room) { setTitle("No rooms yet"); $("#messages").innerHTML = ""; return; }
+    const members = room.members.map((m) => S.agents[m]?.name).filter(Boolean);
+    setTitle(room.kind === "group" ? room.name : room.name,
+             room.kind === "group" ? `Group room · ${members.join(", ")}` : `Private room · ${S.agents[room.members[0]]?.role || "agent"}`);
     const data = await api(`/api/rooms/${room.id}/messages`);
     $("#messages").innerHTML = data.messages.map(msgHtml).join("");
     setPlan(data.plan);
@@ -155,8 +172,11 @@
   function msgHtml(m) {
     const kind = m.meta?.kind || "";
     const who = m.sender_type === "user" ? "" : m.sender_type === "agent" ? (m.agent_name || S.agents[m.sender_id]?.name || "agent") : "";
-    const label = kind === "question" ? " · needs your answer" : kind === "handoff" ? " · handoff" : kind === "update" ? " · update" : "";
-    return `<div class="msg ${m.sender_type} ${kind}">${who ? `<div class="who">${esc(who)}${label}</div>` : ""}${md(m.content)}</div>`;
+    const label = kind === "question" ? " · asks you" : kind === "handoff" ? " · hands over" : kind === "update" ? " · progress" : "";
+    if (m.sender_type === "agent") {
+      return `<article class="msg agent ${kind}">${mono(who)}<div class="body"><div class="who"><strong>${esc(who)}</strong>${label}</div>${md(m.content)}</div></article>`;
+    }
+    return `<div class="msg ${m.sender_type} ${kind}">${md(m.content)}</div>`;
   }
   function setPlan(plan) { $("#plan").classList.toggle("hidden", !plan); $("#plan-body").innerHTML = md(plan || ""); }
   function setWorking(tasks) {
@@ -253,11 +273,11 @@
   // ---------- agents ----------
   const POLICY = ["auto", "ask", "deny"];
   function renderAgents() {
-    $("#title").textContent = "Agents";
+    setTitle("Agents", "Your troupe");
     const v = $("#view-agents");
-    v.innerHTML = `<div class="row"><button class="btn primary" id="add-agent">+ New agent</button></div>` + S.state.agents.map((a) => `
+    v.innerHTML = `<div class="row"><button class="btn primary" id="add-agent">New agent</button></div>` + S.state.agents.map((a) => `
       <div class="card">
-        <h3>${esc(a.name)} <span class="badge ${a.status === "active" ? "ok" : "warn"}">${a.status}</span>
+        <h3>${mono(a.name)} ${esc(a.name)} <span class="badge ${a.status === "active" ? "ok" : "warn"}">${a.status}</span>
             <span class="badge">${esc(a.model || S.state.default_model)}</span></h3>
         <div>${esc(a.role)}</div>
         <div class="meta">Email: ${esc(a.email || "not configured")} · AI spend this week: $${a.llm_spend_week.toFixed(2)} / $${a.llm_budget_usd_week}
@@ -293,7 +313,7 @@
     const rows = await api(`/api/agents/${id}/memories`);
     const box = $(`#mem-${id}`);
     box.innerHTML = `<div class="row"><input id="newmem-${id}" placeholder="Add a memory (e.g. I prefer aisle seats)"><button class="btn" id="addmem-${id}">Add (pinned)</button></div>` +
-      (rows.map((m) => `<div class="row"><span class="badge">${m.pinned ? "📌" : "#" + m.id}</span><span style="flex:1">${esc(m.content)}</span><button class="link" data-forget="${m.id}">forget</button></div>`).join("") || `<div class="meta">No memories yet.</div>`);
+      (rows.map((m) => `<div class="row"><span class="badge">${m.pinned ? icon("pin") + " pinned" : "#" + m.id}</span><span style="flex:1">${esc(m.content)}</span><button class="link" data-forget="${m.id}">forget</button></div>`).join("") || `<div class="meta">No memories yet.</div>`);
     $(`#addmem-${id}`).onclick = async () => { const c = $(`#newmem-${id}`).value.trim(); if (c) { await api(`/api/agents/${id}/memories`, { method: "POST", body: { content: c, pinned: true } }); renderMemory(id); } };
     box.querySelectorAll("[data-forget]").forEach((b) => b.onclick = async () => { await api(`/api/memories/${b.dataset.forget}`, { method: "DELETE" }); renderMemory(id); });
   }
@@ -325,7 +345,7 @@
 
   // ---------- skills ----------
   async function renderSkills() {
-    $("#title").textContent = "Skills";
+    setTitle("Skills", "What your agents know how to do");
     const rows = await api("/api/skills");
     $("#view-skills").innerHTML = `<div class="card meta">Teach a skill by demonstration: in any room send <code>/teach skill-name @Agent</code>,
       walk the agent through the task once, then send <code>/done</code>. Run it later by saying “use skill skill-name”, or schedule it.</div>` +
@@ -345,9 +365,9 @@
 
   // ---------- schedules ----------
   async function renderSchedules() {
-    $("#title").textContent = "Schedules";
+    setTitle("Schedules", "Work that starts on its own");
     const rows = await api("/api/schedules");
-    $("#view-schedules").innerHTML = `<div class="row"><button class="btn primary" id="add-sched">+ New schedule</button><span class="meta">Cron, in UTC. “0 8 * * 1-5” = weekdays 08:00.</span></div>` +
+    $("#view-schedules").innerHTML = `<div class="row"><button class="btn primary" id="add-sched">New schedule</button><span class="meta">Cron, in UTC. “0 8 * * 1-5” = weekdays 08:00.</span></div>` +
       (rows.map((s) => `<div class="card"><h3>${esc(s.agent_name)} <span class="badge">${esc(s.cron)}</span><span class="badge ${s.enabled ? "ok" : "warn"}">${s.enabled ? "on" : "off"}</span></h3>
         <div>${esc(s.prompt)}</div><div class="meta">Next: ${new Date(s.next_run * 1000).toLocaleString()}${s.last_run ? ` · last ${ago(s.last_run)} ago` : ""}</div>
         <div class="row"><button class="btn" data-toggle="${s.id}" data-on="${s.enabled}">${s.enabled ? "Disable" : "Enable"}</button><button class="btn danger" data-del="${s.id}">Delete</button></div></div>`).join("") || `<div class="meta">No schedules yet. Agents can also create their own.</div>`);
@@ -366,7 +386,7 @@
 
   // ---------- audit ----------
   async function renderAudit() {
-    $("#title").textContent = "Activity";
+    setTitle("Activity", "Every action, in order");
     const rows = await api("/api/audit?limit=300");
     const total = rows.filter((r) => r.kind === "llm").reduce((s, r) => s + r.cost_usd, 0);
     $("#view-audit").innerHTML = `<div class="meta">Every model call, tool call, approval and trigger is logged. Last 300 entries · AI cost shown: $${total.toFixed(3)}</div>
@@ -376,14 +396,14 @@
 
   // ---------- vault & system ----------
   async function renderSettings() {
-    $("#title").textContent = "Vault & system";
+    setTitle("Vault & system", "Keys, purchases and the machine");
     const [secrets, sys, buys] = await Promise.all([api("/api/secrets"), api("/api/system"), api("/api/purchases")]);
     const mem = sys.memory_mb || {};
     $("#view-settings").innerHTML = `
       <div class="card"><h3>System</h3>
         <div class="meta">Provider: ${esc(S.state.provider)} · default model ${esc(S.state.default_model)} · email ${S.state.email_provider === "agentmail" ? "AgentMail" : S.state.email_enabled ? "IMAP/SMTP" : "off"} · SMS ${S.state.sms_enabled ? "on" : "off"}</div>
         <div class="meta">RAM available: ${mem.MemAvailable ?? "?"} / ${mem.MemTotal ?? "?"} MB · running tasks ${sys.running_tasks}/${sys.max_parallel} · sandboxes ${sys.sandboxes.length}/${sys.max_sandboxes}</div>
-        ${sys.sandboxes.map((s) => `<div class="meta">🧰 ${esc(S.agents[s.agent_id]?.name || s.agent_id)}: ${esc(s.memory)} · CPU ${esc(s.cpu)}</div>`).join("")}
+        ${sys.sandboxes.map((s) => `<div class="meta">${icon("box")} ${esc(S.agents[s.agent_id]?.name || s.agent_id)}: ${esc(s.memory)} · CPU ${esc(s.cpu)}</div>`).join("")}
         <div class="meta">Connectors: ${esc(Object.keys(S.state.connectors).join(", ") || "none (add data/connectors.json)")}</div>
         <div class="row"><button class="btn" id="notif">Enable desktop notifications</button></div>
       </div>

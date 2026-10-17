@@ -85,7 +85,7 @@ class TelegramBot:
         if text == "/rooms":
             rooms = db.all("SELECT id, name, kind FROM rooms ORDER BY created_at")
             cur = self.room_id
-            return await self.say("\n".join(f"{'▶' if r['id'] == cur else ' '} {r['name']} ({r['kind']})"
+            return await self.say("\n".join(f"{'• ' if r['id'] == cur else '  '}{r['name']} ({r['kind']})"
                                             for r in rooms) or "no rooms yet")
         if text.startswith("/use "):
             name = text[5:].strip().lower()
@@ -108,9 +108,9 @@ class TelegramBot:
 
     async def send_approval(self, d: dict):
         args = json.dumps(d["args"], indent=1)[:1500]
-        await self.say(f"🔐 {d.get('agent_name', '')} wants to run {d['tool']}\nWhy asking: {d['reason']}\n\n{args}",
-                       reply_markup={"inline_keyboard": [[{"text": "✅ Approve", "callback_data": f"ap:{d['id']}:y"},
-                                                          {"text": "❌ Deny", "callback_data": f"ap:{d['id']}:n"}]]})
+        await self.say(f"Approval needed — {d.get('agent_name', '')} would like to run {d['tool']}\nWhy asking: {d['reason']}\n\n{args}",
+                       reply_markup={"inline_keyboard": [[{"text": "Approve", "callback_data": f"ap:{d['id']}:y"},
+                                                          {"text": "Decline", "callback_data": f"ap:{d['id']}:n"}]]})
 
     async def forward_events(self):
         q = self.app.events.subscribe()
@@ -125,7 +125,7 @@ class TelegramBot:
                     await self.say(f"{who}: {d['content']}")
                 elif ev["type"] == "message" and d["sender_type"] == "agent" and d["meta"].get("kind") == "question":
                     room = self.app.db.one("SELECT name FROM rooms WHERE id = ?", (d["room_id"],))
-                    await self.say(f"❓ {d.get('agent_name')} in {room['name'] if room else '?'}: {d['content']}\n"
+                    await self.say(f"Question from {d.get('agent_name')} in {room['name'] if room else '?'}: {d['content']}\n"
                                    f"(/use {room['name'] if room else ''} to answer)")
             except Exception:
                 log.exception("telegram forward failed")

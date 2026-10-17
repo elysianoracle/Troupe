@@ -442,7 +442,7 @@ def build_api(app) -> FastAPI:
         agent = next((a for a in agents if app.agent_perms(a).get("sms_send") != "deny"), None)
         if agent:
             room = app.dm_room(agent["id"])
-            app.orch.post(room["id"], "system", "", f"💬 SMS from {form.get('From', '?')}")
+            app.orch.post(room["id"], "system", "", f"New text message from {form.get('From', '?')}")
             app.orch.create_task(agent["id"], room["id"], "sms", f"From: {form.get('From')}\n\n{form.get('Body', '')}",
                                  tainted=True)
         return Response("<Response></Response>", media_type="application/xml")

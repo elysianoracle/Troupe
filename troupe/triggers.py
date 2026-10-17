@@ -55,7 +55,7 @@ async def email_poller(app) -> None:
                         + (f"Attachments: {', '.join(mail['attachments'])}\n" if mail["attachments"] else "")
                         + f"\n{mail['body']}")
                 db.audit("trigger", "email", {"from": mail["from"], "subject": mail["subject"]}, agent_id=agent["id"])
-                app.orch.post(room["id"], "system", "", f"📧 New email for {agent['name']} from {mail['from']}: "
+                app.orch.post(room["id"], "system", "", f"New email for {agent['name']} from {mail['from']}: "
                                                         f"{mail['subject']}")
                 app.orch.create_task(agent["id"], room["id"], "email", body, tainted=True,
                                      state={"in_reply_to": mail["message_id"]})
